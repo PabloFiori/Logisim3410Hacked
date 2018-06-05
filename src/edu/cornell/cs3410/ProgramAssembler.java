@@ -41,17 +41,17 @@ public class ProgramAssembler {
     }
 
     private static class Segment implements Cloneable {
-        public int start_pc;
-        public int data[];
+        public int start_pc; //start addr
+        public int data[]; //list of int instructions
         public Segment(int pc, int d[]) { start_pc = pc; data = d; }
     }
 
     static class Listing implements Cloneable {
-        private String src = "";
-        private Segment seg[] = new Segment[0];
-        private ProgramState state;
-        private ArrayList<String> src_lines = new ArrayList<String>();
-        private ArrayList<Integer> addr_map = new ArrayList<Integer>();
+        private String src = ""; //file name
+        private Segment seg[] = new Segment[0]; //list of all segments
+        private ProgramState state; // state of the program which probably doesnt need to be changed.
+        private ArrayList<String> src_lines = new ArrayList<String>(); //lines of src code
+        private ArrayList<Integer> addr_map = new ArrayList<Integer>(); //array of addresses parallel with src_lines
 
         public Listing() {}
         public Listing(String value) throws IOException {
@@ -89,7 +89,7 @@ public class ProgramAssembler {
         }
 
         public void setSource(String s) throws IOException {
-            ArrayList<String> sl = splitLines(s);
+            ArrayList<String> sl = splitLines(s);  // list of every line in the form of a string
             ArrayList<Integer> am = new ArrayList<Integer>();
             seg = assemble(sl, 0, am);
             src = s;

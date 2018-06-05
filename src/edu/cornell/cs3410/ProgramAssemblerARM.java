@@ -20,11 +20,11 @@ public class ProgramAssembler {
 
     public static void main(String args[]) {
         if (args.length != 1) {
-            System.err.println("usage: ProgramAssembler <arm-asm-file>");
+            System.err.println("usage: ProgramAssembler <mips-asm-file>");
             System.exit(1);
         }
         Listing code = new Listing();
-        try {  //Load a file into ROM
+        try {
             code.load(new File(args[0]));
             for (Segment segment : code.seg) {
                 for (int i = 0; i < segment.data.length; i++) {
@@ -175,18 +175,42 @@ public class ProgramAssembler {
         }
         return res;
     }
-    
-    //SO THIS WAS THE ONLY THING THAT I ACTUALLY CHANGED
-    
+
     // some patterns
     static String _reg = "\\$(\\d+|a[1-4]|v[1-8]|ip|sp|lr|pc)";
-    static String __hex = "0x[a-fA-F0-9]+";
-    static String __decimal = "-?\\d+";
+    static String __hex = "#0x[a-fA-F0-9]+";
+    static String __decimal = "#-?\\d+";
     static String __label = "[a-zA-Z]\\w*";
+    static String __shift = "(ASR|LSL|LSR|ROR|asr|lsl|lsr|ror)";
     static String _imm = "("+__hex+"|"+__decimal+"|"+__label+")";
-
-    //YOU HAVE GOTTEN TO HERE!
     
+    
+    static Pattern MovCmpRIm = Pattern.compile(_reg + "," + _reg + "(," + _shift + _imm+")*"); //Move and comparison instructions with an optional barrel shift
+    static Pattern MovCmpRR = Pattern.compile(_reg + "," + _reg + "(," + _shift + _reg+")*");
+    static Pattern MovCmpIm = Pattern.compile(_reg + "," + _imm);
+    
+    static Pattern DPIm = Pattern.compile(_reg + "," + _reg + "," + _reg + "(," + _shift + _reg+")*"); //Other Data proccessing instructions.
+    static Pattern DPR = Pattern.compile(_reg + "," + _reg + "," + _reg + "(," + _shift + _reg+")*");
+    static Pattern DPIm = Pattern.compile(_reg + "," + _reg + "," + _imm);
+    
+    static Pattern B = Pattern.compile(_imm); // branch instructions with an immediate (B, BL)
+    static Pattern BX = Pattern.compile(_reg); // branch instructions with a register. Exchange between thumb and arm isn't relevant for our purposes (BX, BLX)
+    
+    static Pattern LdrStr = Pattern.compile(_reg + ",[" + _reg + "(," + _imm + "|," + _reg ")?" + "]");
+    
+    
+    
+    
+    
+    static Pattern pat_mem = Pattern.compile(_reg+","+_imm+"\\("+_reg+"\\)");
+    
+    
+    
+    
+    
+    
+    
+
     private static int parseSegmentAddress(int lineno, String addr) throws IOException {
         if (addr.toLowerCase().startsWith("0x"))
             return Integer.parseInt(addr.substring(2), 16);
@@ -221,7 +245,6 @@ public class ProgramAssembler {
                 addr_map.add(null);
                 continue;
             }
-            // error catching start
             int i;
             if (line.toLowerCase().startsWith(".text")) {
                 i = line.indexOf(' ');
@@ -261,8 +284,6 @@ public class ProgramAssembler {
                     err.add("Line " + (lineno+1) + ": illegal label name '"+name+"' before ':'");
                     continue;
                 }
-                //Error catching end
-                
                 map.put(name, new Integer(addr));
                 if (i < line.length()-1) {
                     // label: instruction
@@ -285,6 +306,10 @@ public class ProgramAssembler {
         return map;
     }
 
+    
+    //Really this is what I should redo
+    
+    
     static HashMap<String, Command> cmds = new HashMap<String, Command>();
     static HashMap<Integer, Command> opcodes = new HashMap<Integer, Command>();
     static HashMap<Integer, Command> fcodes = new HashMap<Integer, Command>();
@@ -309,6 +334,17 @@ public class ProgramAssembler {
         UNSIGNED_ABSOLUTE,
         ANY_ABSOLUTE
     };
+    
+    //checks to see if an immediate value is valid. See comment above following function.
+    private static boolean validateImm(int i) {
+    	for (int cnt = 0; cnt < 16; cnt++) {
+    		if (i < 0xff) return true;
+    		i = Integer.rotateRight(i, 2);
+    	}
+    	return false;
+    }
+    
+    // These needs to be modified for the new immediate size and needs to be extended to ensure an immediate is valid. ie. 2*x ROR y where x is a 4 bit number and y is an 8 bit number.
     private static int resolve(int lineno, String imm, int addr, HashMap<String, Integer> sym, Type type, int nbits) throws IOException {
         int offset = (type == Type.SIGNED_RELATIVE ? addr+4 : 0);
         long min = (type == Type.UNSIGNED_ABSOLUTE ? 0 : (-1L << (nbits-1)));
@@ -361,17 +397,38 @@ public class ProgramAssembler {
             throw new ParseException("Line "+(lineno+1)+": invalid "+type+" '"+imm+"'");
         }
     }
+    
+    private int resolveCond(String cond) {
+    	else if cond.equalsIgnoreCase("EQ") return 0;
+    	else if cond.equalsIgnoreCase("NE") return 1;
+    	else if cond.equalsIgnoreCase("HS") return 2;
+    	else if cond.equalsIgnoreCase("LO") return 3;
+    	else if cond.equalsIgnoreCase("MI") return 4;
+    	else if cond.equalsIgnoreCase("PL") return 5;
+    	else if cond.equalsIgnoreCase("VS") return 6;
+    	else if cond.equalsIgnoreCase("VC") return 7;
+    	else if cond.equalsIgnoreCase("HI") return 8;
+    	else if cond.equalsIgnoreCase("LS") return 9;
+    	else if cond.equalsIgnoreCase("GE") return 10;
+    	else if cond.equalsIgnoreCase("LT") return 11;
+    	else if cond.equalsIgnoreCase("GT") return 12;
+    	else if cond.equalsIgnoreCase("LE") return 13;
+    	else if cond.equalsIgnoreCase("") return 14;
+    	else return -1;
+    }
 
     private static abstract class Command {
         String name;
         int opcode;
-        Command(String name, int op) {
+        int format;
+        Command(String name, int op, int f) {
             this.name = name;
             opcode = op;
+            format = f;
             cmds.put(name, this);
         }
         abstract String decode(int addr, int instr);
-        abstract int encode(int lineno, int addr, String args, HashMap<String, Integer> sym) throws IOException;
+        abstract int encode(int lineno, int addr, String args, HashMap<String, Integer> sym, boolean setCond, int cond) throws IOException;
     }
 
     private static class Nop extends Command {
@@ -379,12 +436,12 @@ public class ProgramAssembler {
         String decode(int addr, int instr) {
             return name;
         }
-        int encode(int lineno, int addr, String args, HashMap<String, Integer> hashmap) throws IOException {
+        int encode(int lineno, int addr, String args, HashMap<String, Integer> hashmap, boolean setCond, int cond) throws IOException {
             return 0;
         }
     }
 
-    private static class Syscall extends Command {
+/*    private static class Syscall extends Command {
       Syscall(String name, int op) { 
         super(name, op);
         opcodes.put(new Integer(op), this);
@@ -408,7 +465,7 @@ public class ProgramAssembler {
       int encode (int lineno, int addr, String args, HashMap<String, Integer> hashmap) throws IOException {
         return (8 << 26) | (1 << 25) | 6;
       }
-    }
+    }*/
 
     static Pattern pat_word = Pattern.compile(_imm);
     private static class Word extends Command {
@@ -429,18 +486,17 @@ public class ProgramAssembler {
         }
     }
 
-    //edited start
     private static int reg(String r) throws NumberFormatException {
         switch (r.charAt(0)) {
         case 'a':
-        	return Integer.parseInt(r.substring(1)) - 1; 		// 0-3
+            return Integer.parseInt(r.substring(1));
         case 'v':
-            return 4 + (Integer.parseInt(r.substring(1)) - 1); 	// 4-11
+            return 4 + Integer.parseInt(r.substring(1));
         case 'i': //ip
-            return 12;
+            return 12
         case 's': // sp
             return 13;
-        case 'l': // lr
+        case 'l;': // lr
             return 14;
         case 'p': // pc
             return 15;
@@ -448,7 +504,6 @@ public class ProgramAssembler {
             return Integer.parseInt(r);
         }
     }
-    //edited end
 
     private static abstract class IType extends Command {
         IType(String name, int op) {
@@ -893,7 +948,7 @@ public class ProgramAssembler {
             if (line == null) {
                 continue;
             }
-            int i = line.indexOf(' ');
+            int i = line.indexOf(' ');    
             String instr = i >= 0 ? line.substring(0, i) : line;
             String args = i >= 0 ? line.substring(i+1) : "";
             if (instr.equalsIgnoreCase(".text")) {
@@ -912,13 +967,46 @@ public class ProgramAssembler {
                 }
             }
             else {
+            	
+            	int len = instr.length();
+            	int c = 0;
                 Command cmd = cmds.get(instr.toLowerCase());
                 if (cmd == null) {
-                    err.add("Line " + (lineno+1)+": unrecognized instruction: '"+instr+"'");
+                	
+                	if (len >= 3) { // s + cond -> case 1
+	                	cmd = cmds.get(instr.substring(0, len-3).toLowerCase());
+	                	if (cmd != null) {c = 1;}
+	                	}
+                	
+                	if (len >= 2) { // cond -> case 2
+                    	cmd = cmds.get(instr.substring(0, len-2).toLowerCase());
+                    	if (cmd != null) {c = 2;}
+                    	}
+                	
+                	if (len >= 1) { // s -> case 3
+                    	cmd = cmds.get(instr.substring(0, len-1).toLowerCase());
+                    	if (cmd != null) {c = 3;}
+                    	}
+                	// if c is 0 here, it isnt an inst
+                	if c = 0 {
+                		err.add("Line " + (lineno+1)+": unrecognized instruction: '"+instr+"'");
+                	}
                 }
-                else if (cs >= 0) {
+                
+                
+                
+                if (cmd != null && cs >= 0) {
                     try {
-                        seg[cs].data[cnt++] = cmd.encode(lineno, addr, args, sym);
+                    	switch (c) {
+                    	case 0:
+                    		seg[cs].data[cnt++] = cmd.encode(lineno, addr, args, sym, false, 14);
+                    	case 1:
+                    		seg[cs].data[cnt++] = cmd.encode(lineno, addr, args, sym, true, resolveCond(instr.substring(len-3, len-1)));
+                    	case 2:
+                    		seg[cs].data[cnt++] = cmd.encode(lineno, addr, args, sym, false, resolveCond(instr.substring(len-3, len-1)));
+                    	case 3:
+                    		seg[cs].data[cnt++] = cmd.encode(lineno, addr, args, sym, true, 14);
+                    	}
                     }
                     catch (ParseException e) {
                         err.add(e);
